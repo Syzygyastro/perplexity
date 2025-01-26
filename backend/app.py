@@ -1,5 +1,4 @@
 from dotenv import load_dotenv
-from openai import OpenAI
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from duckduckgo_search import DDGS
@@ -50,21 +49,31 @@ def query_openai_with_search():
 
     try:
         # Step 1: Perform a DuckDuckGo search
-        search_results = DDGS().text(user_query, max_results=5)
-        print("Search results: ", search_results)
+        ddg = DDGS()
+        search_results = ddg.text(user_query, max_results=5)
+
+        # Check if search results are empty
         if not search_results:
             return jsonify({'response': "No relevant search results found."})
 
-        # Extract snippets from search results
-        snippets = [result['body'] for result in search_results if 'body' in result]
+        # Step 2: Extract snippets and links from search results
+        snippets = []
+        links = []
+
+        for result in search_results:
+            if 'body' in result:
+                snippets.append(result['body'])
+            if 'href' in result:
+                links.append(result['href'])
 
         # Combine snippets into a single string for LangChain
         combined_results = "\n".join(snippets)
 
-        # Step 2: Use LangChain to generate a response
+        # Step 3: Use LangChain to generate a response
         summary = chain.run(query=user_query, results=combined_results)
 
-        return jsonify({'response': summary})
+        # Step 4: Return both the summary and the links
+        return jsonify({'response': summary, 'links': links})
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
