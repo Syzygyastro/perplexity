@@ -1,8 +1,13 @@
 from dotenv import load_dotenv
 from openai import OpenAI
-import os
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from duckduckgo_search import DDGS
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from langchain.chat_models import ChatOpenAI
+
+import os
 
 # Load environment variables
 load_dotenv()
@@ -11,10 +16,32 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-client = OpenAI()
+# Initialize OpenAI
+openai_api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize LangChain's ChatOpenAI model
+llm = ChatOpenAI(model="gpt-4", openai_api_key=openai_api_key)
+
+# Define a LangChain prompt template for summarizing search results
+prompt = PromptTemplate(
+    input_variables=["query", "results"],
+    template="""
+    You are a helpful assistant. Below are search results for a user's query:
+    Query: {query}
+
+    Search Results:
+    {results}
+
+    Summarize these results into a clear and concise response.
+    """
+)
+
+# Create a LangChain summarization chain
+chain = LLMChain(llm=llm, prompt=prompt)
+
 
 @app.route('/api/query', methods=['POST'])
-def query_openai():
+def query_openai_with_search():
     data = request.json
     user_query = data.get('query', '')
 
@@ -22,26 +49,27 @@ def query_openai():
         return jsonify({'error': 'No query provided'}), 400
 
     try:
-        # Query OpenAI's ChatCompletion endpoint
-        response = client.chat.completions.create(
-            model="gpt-4o-mini-2024-07-18",  # Use "gpt-4" if you want GPT-4
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": user_query}
-            ],
-            max_tokens=150,
-            temperature=0.7
-        )
-        
-        # Extract the response message
-        message = response.choices[0].message.content
-        return jsonify({'response': message})
+        # Step 1: Perform a DuckDuckGo search
+        search_results = DDGS().text(user_query, max_results=5)
+        print("Search results: ", search_results)
+        if not search_results:
+            return jsonify({'response': "No relevant search results found."})
+
+        # Extract snippets from search results
+        snippets = [result['body'] for result in search_results if 'body' in result]
+
+        # Combine snippets into a single string for LangChain
+        combined_results = "\n".join(snippets)
+
+        # Step 2: Use LangChain to generate a response
+        summary = chain.run(query=user_query, results=combined_results)
+
+        return jsonify({'response': summary})
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
-    print("Starting Backend !")
-    import multiprocessing
-    print(multiprocessing.cpu_count())  # Number of available CPU cores
 
+if __name__ == '__main__':
+    print("Starting Backend!")
     app.run(debug=True)
